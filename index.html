@@ -122,26 +122,30 @@ Drop file here
 </div>
 
 <script>
-
 let pc;
 let channel;
 let file;
 let receiveBuffer=[];
 let receivedSize=0;
+let fileSize=0;
 let room;
 
 const config={
- iceServers:[
- {urls:'stun:stun.l.google.com:19302'}
- ]
+ iceServers:[{urls:'stun:stun.l.google.com:19302'}]
 };
 
+// Public demo signaling (for testing only)
 const ws=new WebSocket("wss://signal.lol");
 
 ws.onmessage=async msg=>{
 let data=JSON.parse(msg.data);
-
 if(data.room!==room)return;
+
+if(data.joinRequest){
+let offer=await pc.createOffer();
+await pc.setLocalDescription(offer);
+ws.send(JSON.stringify({offer,room}));
+}
 
 if(data.offer){
 await pc.setRemoteDescription(data.offer);
@@ -158,6 +162,9 @@ if(data.candidate){
 pc.addIceCandidate(data.candidate);
 }
 
+if(data.meta){
+fileSize=data.meta.size;
+}
 }
 
 function generateCode(){
@@ -186,29 +193,27 @@ setupPeer();
 
 channel=pc.createDataChannel("file");
 setupSend();
-
-let offer=await pc.createOffer();
-await pc.setLocalDescription(offer);
-
-ws.send(JSON.stringify({offer,room}));
 }
 
 async function joinRoom(){
 room=document.getElementById("roomInput").value;
+if(room.length!==6) return alert("Enter 6 digit code");
 setupPeer();
+ws.send(JSON.stringify({joinRequest:true,room}));
 }
 
 function setupSend(){
 channel.onopen=()=>{
 document.getElementById("file").onchange=e=>{
 file=e.target.files[0];
+ws.send(JSON.stringify({meta:{size:file.size,name:file.name},room}));
 sendFile();
 };
 };
 }
 
 function sendFile(){
-let chunk=16384;
+let chunk=65536;
 let offset=0;
 let reader=new FileReader();
 
@@ -221,6 +226,8 @@ document.getElementById("bar").style.width=percent+"%";
 
 if(offset<file.size){
 readSlice(offset);
+}else{
+channel.send("EOF");
 }
 };
 
@@ -234,22 +241,25 @@ readSlice(0);
 
 function setupReceive(){
 channel.onmessage=e=>{
-receiveBuffer.push(e.data);
-receivedSize+=e.data.byteLength;
-
-let percent=(receivedSize/100000000)*100;
-document.getElementById("bar").style.width=Math.min(percent,100)+"%";
-
-if(e.data.byteLength<16384){
+if(e.data==="EOF"){
 let blob=new Blob(receiveBuffer);
 let a=document.createElement('a');
 a.href=URL.createObjectURL(blob);
-a.download="file";
+a.download="received_file";
 a.click();
+receiveBuffer=[];
+return;
+}
+
+receiveBuffer.push(e.data);
+receivedSize+=e.data.byteLength;
+
+if(fileSize){
+let percent=(receivedSize/fileSize)*100;
+document.getElementById("bar").style.width=percent+"%";
 }
 };
 }
-
 </script>
 
 </body>
